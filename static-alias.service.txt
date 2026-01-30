@@ -1,0 +1,12 @@
+[Unit]
+Description=Dynamic IP Alias Finder
+# Run AFTER the network is actually online, not just initialized
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/add_static_alias.sh
+User=root
+
+[Install]
+WantedBy=multi-user.target
