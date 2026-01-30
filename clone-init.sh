@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# --- CONFIGURATION ---
+BASE_IP="192.168.105"
+START_OCTET=191
+INTERFACE="wlan0"
+SUBNET="24"
+# ---------------------
+
+CURRENT_OCTET=$START_OCTET
+
+# Wait for interface and WiFi chip to be fully ready
+echo "Waiting for WiFi association..."
+while ! ip addr show "$INTERFACE" | grep -q "inet "; do
+  sleep 2
+done
+
+# Disable WiFi Power Management to prevent sleep/lag
+/sbin/iw dev "$INTERFACE" set power_save off
+
+while true; do
+    TARGET_IP="${BASE_IP}.${CURRENT_OCTET}"
+    
+    # Check if IP is in use (ping 2 times, wait 1 second)
+    if ping -c 2 -W 1 "$TARGET_IP" > /dev/null 2>&1; then
+        echo "Address $TARGET_IP is BUSY. Trying next..."
+        ((CURRENT_OCTET++))
+        
+        if [ $CURRENT_OCTET -gt 254 ]; then
+            echo "Error: No available IPs found."
+            exit 1
+        fi
+    else
+        echo "Address $TARGET_IP is FREE. Assigning..."
+        
+        # 1. Assign the Static IP Alias
+        ip addr add "${TARGET_IP}/${SUBNET}" dev "$INTERFACE" label "${INTERFACE}:static"
+        
+        # 2. Update Hostname to match IP (e.g., rpi0w191)
+        NEW_HOSTNAME="rpi0w${CURRENT_OCTET}"
+        hostnamectl set-hostname "$NEW_HOSTNAME"
+        # Update /etc/hosts to prevent sudo lag
+	cat <<EOF > /etc/hosts
+127.0.0.1	localhost
+::1		localhost ip6-localhost ip6-loopback
+ff02::1		ip6-allnodes
+ff02::2		ip6-allrouters
+
+127.1.1		$NEW_HOSTNAME
+EOF
+#        sed -i "s/127.0.1.1.*/127.0.1.1\t$NEW_HOSTNAME/g" /etc/hosts
+        
+        # 3. Handle SSH Keys (Generate if missing)
+        if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+	    echo "generating new SSH keys..."
+	    systemctrl restart ssh
+#            DEBIAN_FRONTEND=noninteractive dpkg-reconfigure openssh-server
+        fi
+
+        echo "SUCCESS: Hostname is $NEW_HOSTNAME, Static IP is $TARGET_IP"
+        break
+    fi
+done
